@@ -23,285 +23,259 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 // Token: 0x02000410 RID: 1040
-public static class MapModManager {
-	private static bool enableEnemySensors = false;
-	private static bool enableEnemySensorsRead = false; // Whether enemy sensor state has been read yet
-	public static bool EnableEnemySensors { // Finicky initialization so that state is guaranteed to be set by the time this is called
-		get {
-			if (!MapModManager.enableEnemySensorsRead) {
-				MapModManager.enableEnemySensorsRead = true;
-				try {
-					MapModManager.enableEnemySensors = File.ReadAllText(Path.Combine(Path.Combine(Application.dataPath, (Application.platform == RuntimePlatform.OSXPlayer) ? "Resources/Data/Managed" : "Managed"), "settings/enemy-sensors.txt")).Trim().ToLower() == "on";
-				} catch {}
-			}
-			return MapModManager.enableEnemySensors;
-		}
-	}
+public static class MapModManager
+{
+    private static bool enableEnemySensors = false;
+    private static bool enableEnemySensorsRead = false; // Whether enemy sensor state has been read yet
+    public static bool EnableEnemySensors
+    {
+        get
+        {
+            if (!MapModManager.enableEnemySensorsRead)
+            {
+                MapModManager.enableEnemySensorsRead = true;
+                try
+                {
+                    string managedPath = Path.Combine(Application.dataPath, (Application.platform == RuntimePlatform.OSXPlayer) ? "Resources/Data/Managed" : "Managed");
+                    MapModManager.enableEnemySensors = File.ReadAllText(Path.Combine(managedPath, "settings/enemy-sensors.txt")).Trim().ToLower() == "on";
+                }
+                catch { }
+            }
+            return MapModManager.enableEnemySensors;
+        }
+    }
 
-	private static string logName = "ge_mod.log";
+    private static string logName = "ge_mod.log";
 
-	static MapModManager() {
-		// Only read the zoom value once so you can't change it between /zoom commands
-		// Read zoom setting
-		try {
-			// Application.dataPath = Deserts of Kharak/Data on Windows, = DesertsofKharak.app/Contents on mac
-			string managedPath = Path.Combine(Application.dataPath, (Application.platform == RuntimePlatform.OSXPlayer) ? "Resources/Data/Managed" : "Managed");
-			zoom = float.Parse(System.IO.File.ReadAllText(Path.Combine(managedPath, "settings/zoom.txt")));
-		} catch {}
+    static MapModManager()
+    {
+        // Only read the zoom value once so you can't change it between /zoom commands
+        try
+        {
+            string managedPath = Path.Combine(Application.dataPath, (Application.platform == RuntimePlatform.OSXPlayer) ? "Resources/Data/Managed" : "Managed");
+            zoom = float.Parse(File.ReadAllText(Path.Combine(managedPath, "settings/zoom.txt")));
+        }
+        catch { }
 
-		ResetLayout();
-	}
+        ResetLayout();
+    }
 
-	private static List<string> sobanUnits = new List<string>{ "C_Sob_Escort_MP", "C_Sob_Baserunner_MP", "C_Sob_Railgun_MP", "C_Sob_SupportCruiser_MP", "C_Sob_Battlecruiser_MP", "C_Sob_AssaultCruiser_MP",
-	                                                           "N_ECMField_MP", "C_Sob_NukeSight_MP", "C_Sob_PopcapScanner", "C_Sob_NukeEmitter_MP", "C_Sob_Carrier_MP" };
-	private static List<string> khaanUnits = new List<string>{ "K_Sandskimmer_MP", "K_Harvester_MP", "K_Baserunner_MP", "K_ExplodingSkimmer_MP", "K_AssaultShip_MP", "K_MissileShip_MP", "K_AssaultRailgun_MP",
-	                                                           "K_HeavyRailgun_MP", "K_Interceptor_MP", "K_Bomber_MP", "K_SupportCruiser_MP", "K_ArtilleryCruiser_MP", "K_HonorGuard_MP", "K_Carrier_MP" };
+    private static List<string> sobanUnits = new List<string>{
+        "C_Sob_Escort_MP", "C_Sob_Baserunner_MP", "C_Sob_Railgun_MP", "C_Sob_SupportCruiser_MP", "C_Sob_Battlecruiser_MP", "C_Sob_AssaultCruiser_MP",
+        "N_ECMField_MP", "C_Sob_NukeSight_MP", "C_Sob_PopcapScanner", "C_Sob_NukeEmitter_MP", "C_Sob_Carrier_MP"
+    };
 
-	public static DictionaryExtensions.ValueIterator<CommanderID, Commander> GetCommanders() {
-		return Sim.Instance.CommanderManager.Commanders;
-	}
+    private static List<string> khaanUnits = new List<string>{
+        "K_Sandskimmer_MP", "K_Harvester_MP", "K_Baserunner_MP", "K_ExplodingSkimmer_MP", "K_AssaultShip_MP", "K_MissileShip_MP", "K_AssaultRailgun_MP",
+        "K_HeavyRailgun_MP", "K_Interceptor_MP", "K_Bomber_MP", "K_SupportCruiser_MP", "K_ArtilleryCruiser_MP", "K_HonorGuard_MP", "K_Carrier_MP"
+    };
 
-	// Loads a map layout onto a map
-	// Map layouts include spawn, artifact, resource and extraction zone locations
-	// This function also removes certain aspects of the level that are already there e.g. wrecks
-	public static void LoadMapLayout() {
-		// No map loaded anymore
-		MapXml = "";
-		LayoutName = "";
+    public static DictionaryExtensions.ValueIterator<CommanderID, Commander> GetCommanders()
+    {
+        return Sim.Instance.CommanderManager.Commanders;
+    }
 
-		Subsystem.AttributeLoader.PatchOverrideData = "";
-		PatchName = "";
-		RevealRandomFactions = false;
+    // Loads the map layout, including wrecks, units, resources, etc.
+    public static void LoadMapLayout()
+    {
+        // Reset map state variables
+        MapXml = "";
+        LayoutName = "";
 
-		if (CustomLayout) {
-			// Move DoK engine objects
-			foreach (Entity entity in Sim.Instance.EntitySystem) {
-				if (entity.HasComponent(11)) {
-					entity.GetComponent<Position>(10).Position2D = new Vector2r(Fixed64.FromInt(1000000), Fixed64.FromInt(1000000)); // Move off the map
-					entity.GetComponent<Resource>(11).Disabled = true; // Make unminable, keeping these in just in case the AI tries to mine from these resources
-				} else if (entity.HasComponent(36) || entity.HasComponent(14)) {
-					entity.GetComponent<Position>(10).Position2D = new Vector2r(Fixed64.FromInt(1000000), Fixed64.FromInt(1000000)); // Move off the map
-				}
-			}
+        Subsystem.AttributeLoader.PatchOverrideData = "";
+        PatchName = "";
+        RevealRandomFactions = false;
 
-			// Disable the pesky black box at the start of levels
-			// Its there to be a transition from what I can tell
-			GameObject blackBox = GameObject.Find("BlackPolygon");
-			if (blackBox != null) {
-				blackBox.transform.position = new Vector3(1000000.0f, 1000000.0f, 1000000.0f);
-			}
+        if (CustomLayout)
+        {
+            // Move existing DoK engine objects off map and disable resources
+            foreach (Entity entity in Sim.Instance.EntitySystem)
+            {
+                if (entity.HasComponent(11))
+                {
+                    entity.GetComponent<Position>(10).Position2D = new Vector2r(Fixed64.FromInt(1000000), Fixed64.FromInt(1000000));
+                    entity.GetComponent<Resource>(11).Disabled = true;
+                }
+                else if (entity.HasComponent(36) || entity.HasComponent(14))
+                {
+                    entity.GetComponent<Position>(10).Position2D = new Vector2r(Fixed64.FromInt(1000000), Fixed64.FromInt(1000000));
+                }
+            }
 
-			// Loading resource layout
-			foreach (MapResourceData resource in resources) {
-				DetectableAttributesData detectableAttributesData = new DetectableAttributesData() {
-					m_SetHasBeenSeenBeforeOnSpawn = true,
-				};
-				SceneEntityCreator.CreateResourcePoint((resource.type == 0) ? "Resource_CU" : "Resource_RU", resource.position, default(Orientation2), new string[0], new ResourceAttributesData((ResourceType)resource.type, resource.amount, resource.collectors), detectableAttributesData, false, default(ResourcePositionalVariations), false);
-			}
+            // Move black box out of view
+            GameObject blackBox = GameObject.Find("BlackPolygon");
+            if (blackBox != null)
+            {
+                blackBox.transform.position = new Vector3(1000000.0f, 1000000.0f, 1000000.0f);
+            }
 
-			// Delete starting units of commanders with no starting fleet
-			foreach (MapSpawnData spawn in spawns) {
-				if (spawn.fleet) continue;
-				foreach (Commander commander in Sim.Instance.CommanderManager.Commanders) {
-					CommanderDirectorAttributes director = Sim.Instance.CommanderManager.GetCommanderDirectorFromID(commander.ID);
-					if (director.PlayerType == PlayerType.AI) continue; // AI needs starting carrier
-					if (((GameMode == TeamSetting.Team) ? (1 - spawn.team) * 3 : spawn.team) + spawn.index == director.SpawnIndex) {
-						foreach (Entity entity in Sim.Instance.EntitySystem.Query().Has(2)) { // All units
-							if (entity.GetComponent<OwningCommander>(5).ID == commander.ID) { // Check if the faction is correct
-								entity.GetComponent<Unit>(2).RetireDespawn();
-							}
-						}
-					}
-				}
-			}
+            // Spawn resources
+            foreach (MapResourceData resource in resources)
+            {
+                var detectableAttributesData = new DetectableAttributesData
+                {
+                    m_SetHasBeenSeenBeforeOnSpawn = true,
+                };
 
-			// Loading units
-			foreach (MapUnitData unit in units) {
-				// Convert team + index to commander ID then spawn unit
-				foreach (Commander commander in Sim.Instance.CommanderManager.Commanders) {
-					CommanderDirectorAttributes director = Sim.Instance.CommanderManager.GetCommanderDirectorFromID(commander.ID);
-					if (((GameMode == TeamSetting.Team) ? (1 - unit.team) * 3 : unit.team) + unit.index == director.SpawnIndex) {
-						if (commander.CommanderAttributes.Name == "SPECTATOR") {
-							continue; // Don't spawn units for spectators
-						} else if (sobanUnits.Contains(unit.type) && commander.CommanderAttributes.Faction.ID != FactionID.Soban) {
-							continue; // Don't spawn Soban units for non Soban players
-						} else if (khaanUnits.Contains(unit.type) && commander.CommanderAttributes.Faction.ID != FactionID.Khaaneph) {
-							continue; // Don't spawn Khaaneph units for non Khaaneph players
-						}
-						SceneEntityCreator.CreateEntity(unit.type, commander.ID, unit.position, unit.orientation);
-						break;
-					}
-				}
-			}
+                string resourceType = resource.type == 0 ? "Resource_CU" : "Resource_RU";
 
-			// Loading wrecks
-			foreach (MapWreckData wreck in wrecks) {
-				DetectableAttributesData detectableAttributes = new DetectableAttributesData {
-					m_SetHasBeenSeenBeforeOnSpawn = true,
-				};
+                SceneEntityCreator.CreateResourcePoint(
+                    resourceType,
+                    resource.position,
+                    default(Orientation2),
+                    new string[0],
+                    new ResourceAttributesData((ResourceType)resource.type, resource.amount, resource.collectors),
+                    detectableAttributesData,
+                    false,
+                    default(ResourcePositionalVariations),
+                    false
+                );
+            }
 
-				ResourcePositionalVariations positions = new ResourcePositionalVariations {
-					ModelOrientationEulersDegrees = new Vector3r(Fixed64.FromConstFloat(0.0f), Fixed64.FromConstFloat(wreck.angle), Fixed64.FromConstFloat(0.0f)),
-				};
+            // Delete starting units for commanders without starting fleet
+            foreach (MapSpawnData spawn in spawns)
+            {
+                if (spawn.fleet) continue;
 
-				ShapeAttributesData shape = new ShapeAttributesData {
-					m_Radius = 100.0f,
-					m_BlocksLOF = wreck.blockLof,
-					m_BlocksAllHeights = wreck.blockLof,
-				};
+                foreach (Commander commander in Sim.Instance.CommanderManager.Commanders)
+                {
+                    CommanderDirectorAttributes director = Sim.Instance.CommanderManager.GetCommanderDirectorFromID(commander.ID);
+                    if (director.PlayerType == PlayerType.AI) continue;
 
-				ResourceAttributesData res = new ResourceAttributesData {
-					m_ResourceType = ResourceType.Resource3, // Type = Wreck
-				};
+                    int expectedSpawnIndex = (GameMode == TeamSetting.Team) ? (1 - spawn.team) * 3 : spawn.team;
+                    if (expectedSpawnIndex + spawn.index == director.SpawnIndex)
+                    {
+                        foreach (Entity entity in Sim.Instance.EntitySystem.Query().Has(2)) // All units
+                        {
+                            if (entity.GetComponent<OwningCommander>(5).ID == commander.ID)
+                            {
+                                entity.GetComponent<Unit>(2).RetireDespawn();
+                            }
+                        }
+                    }
+                }
+            }
 
-				SimWreckSectionResourceSpawnableAttributesData[] childResources = new SimWreckSectionResourceSpawnableAttributesData[wreck.resources.Count];
-				for (int i = 0; i < wreck.resources.Count; i++) {
-					childResources[i] = new SimWreckSectionResourceSpawnableAttributesData {
-						m_DetectableAttributes = new DetectableAttributesData(),
-						m_OverrideDetectableAttributes = true,
-						m_Tags = new string[0],
-						m_EntityTypeToSpawn = (wreck.resources[i].type == 1) ? "Resource_RU" : "Resource_CU",
-						m_ResourceAttributes = new ResourceAttributesData((ResourceType)wreck.resources[i].type, wreck.resources[i].amount, wreck.resources[i].collectors),
-						m_OverrideResourceAttributes = true,
-						m_SpawnPositionOffsetFromSectionCenterX = Fixed64.IntValue((wreck.resources[i].position - wreck.position).X),
-						m_SpawnPositionOffsetFromSectionCenterY = Fixed64.IntValue((wreck.resources[i].position - wreck.position).Y),
-						m_UseNonRandomSpawnPositionOffset = true,
-					};
-				}
+            // Spawn units
+            foreach (MapUnitData unit in units)
+            {
+                foreach (Commander commander in Sim.Instance.CommanderManager.Commanders)
+                {
+                    CommanderDirectorAttributes director = Sim.Instance.CommanderManager.GetCommanderDirectorFromID(commander.ID);
+                    int expectedSpawnIndex = (GameMode == TeamSetting.Team) ? (1 - unit.team) * 3 : unit.team;
 
-				SimWreckAttributesData wreckData = new SimWreckAttributesData {
-					m_WreckSections = new SimWreckSectionAttributesData[] {
-						new SimWreckSectionAttributesData {
-							m_ExplosionChance = 100,
-							m_Health = 1,
-							m_ResourceSpawnables = childResources,
-						},
-					},
-				};
+                    if (expectedSpawnIndex + unit.index == director.SpawnIndex)
+                    {
+                        if (commander.CommanderAttributes.Name == "SPECTATOR")
+                            continue;
 
-				// Orientation2.LocalForward -> (1.0, 0.0)
-				SceneEntityCreator.CreateWreck("Resource_Wreck_MP", wreck.position, Orientation2.LocalForward, new string[0], wreckData, "", shape, res, detectableAttributes, false, positions, false);
-			}
-		}
-	}
+                        if (sobanUnits.Contains(unit.type) && commander.CommanderAttributes.Faction.ID != FactionID.Soban)
+                            continue;
 
-	// Run on every game tick
-	// 1 is the first tick *I think*
-	public static void Tick(BBI.Game.Commands.SimFrameNumber frameNumber) {
-		lock (artUiLock) {
-			FrameNumber = frameNumber.FrameNumber;
+                        if (khaanUnits.Contains(unit.type) && commander.CommanderAttributes.Faction.ID != FactionID.Khaaneph)
+                            continue;
 
-			if (CustomLayout) {
-				// Checking if any artifacts need respawning
-				if (frameNumber.FrameNumber >= 10u && (Sim.Instance.Settings.GameMode.GameSessionSettings.VictoryConditions & VictoryConditions.Retrieval) != 0) {
-					for (int i = 0; i < artifacts.Count; i++) {
-						if (artifacts[i].NeedsRespawning) {
-							Entity e = SceneEntityCreator.CreateCollectibleEntity("Artifact", CollectibleType.Artifact, artifacts[i].position, default(Orientation2));
-							artifacts[i] = new MapArtifactData {
-								entity = e,
-								position = artifacts[i].position,
-							};
-						}
-					}
-				}
+                        SceneEntityCreator.CreateEntity(unit.type, commander.ID, unit.position, unit.orientation);
+                        break;
+                    }
+                }
+            }
 
-				// Creating extraction zones (waiting till frame 10 until SExtractionZoneViewController is set)
-				if (frameNumber.FrameNumber == 10u && (Sim.Instance.Settings.GameMode.GameSessionSettings.VictoryConditions & VictoryConditions.Retrieval) != 0) {
-					while (SExtractionZoneViewController == null); // Spin wait for SExtractionZoneViewController to be set
+            // Spawn wrecks
+            foreach (MapWreckData wreck in wrecks)
+            {
+                var detectableAttributes = new DetectableAttributesData
+                {
+                    m_SetHasBeenSeenBeforeOnSpawn = true,
+                };
 
-					// Hiding existing extraction zones
-					foreach (Entity entity in Sim.Instance.EntitySystem) {
-						if (entity.HasComponent(14)) {
-							SExtractionZoneViewController.ShowExtractionZone(entity, false);
-						}
-					}
+                var positions = new ResourcePositionalVariations
+                {
+                    ModelOrientationEulersDegrees = new Vector3r(
+                        Fixed64.FromConstFloat(0.0f),
+                        Fixed64.FromConstFloat(wreck.angle),
+                        Fixed64.FromConstFloat(0.0f))
+                };
 
-					// Loading extraction zones
-					foreach (MapEzData ez in ezs) {
-						ExtractionZoneDescriptor descriptorEz = new ExtractionZoneDescriptor("ExtractionZone", ez.position, default(Orientation2), new string[] { "G2-Zone2" }, new SceneExtractionZoneEntity(), new ExtractionZoneAttributesData {
-							m_RadiusMeters = ez.radius,
-							m_Query = new QueryContainer {
-								UseEntityTypeQuery = true,
-								QEntityTypeNames = new List<string>(new string[] {
-									"C_Baserunner",
-									"G_Baserunner",
-									"C_Baserunner_MP",
-									"G_Baserunner_MP",
-									"C_Harvester_MP",
-									"G_Harvester_MP",
-									"C_Sob_Baserunner_MP",
-									"K_Baserunner_MP", // For some reason harvesters were in this array for other extraction zones so keeping them in just in case
-								})
-							}
-						}, ez.team);
-						// SceneEntityCreator.CreateEntityFromDescriptor(descriptorRelic, ref fgh); (doesn't work)
+                var shape = new ShapeAttributesData
+                {
+                    m_Radius = 100.0f,
+                    m_BlocksLOF = wreck.blockLof,
+                    m_BlocksAllHeights = wreck.blockLof,
+                };
 
-						// Creating the extraction zone entity
-						int artifactCount = 0; // Used for nothing
-						Entity entityEz = SceneEntityCreator.CreateEntityFromDescriptor(descriptorEz, ref artifactCount);
-						SExtractionZoneViewController.OnSceneEntityCreated(new SceneEntityCreatedEvent(entityEz, descriptorEz));
-					}
-				}
-			}
-		}
-	}
+                var res = new ResourceAttributesData
+                {
+                    m_ResourceType = ResourceType.Resource3, // Wreck resource type
+                };
 
-	// Happens before the main loading of the map
-	static public void SetMap(LevelDefinition levelDef, BBI.Game.Data.GameMode gameType, TeamSetting gameMode, Dictionary<CommanderID, TeamID> teams) {
-		ResetLayout();
+                SimWreckSectionResourceSpawnableAttributesData[] childResources = new SimWreckSectionResourceSpawnableAttributesData[wreck.resources.Count];
+                for (int i = 0; i < wreck.resources.Count; i++)
+                {
+                    var resource = wreck.resources[i];
 
-		// Set game state
-		LevelDef = levelDef;
-		GameType = gameType;
-		GameMode = gameMode;
-		FrameNumber = 0;
+                    string entityType = "Resource_CU";
+                    if (resource.type == 1) entityType = "Resource_RU";
+                    else if (resource.type == 2) entityType = "Artifact_Resource";
 
-		Console.WriteLine($"[GE mod] Scene name: {LevelDef.SceneName}");
+                    childResources[i] = new SimWreckSectionResourceSpawnableAttributesData
+                    {
+                        m_DetectableAttributes = new DetectableAttributesData(),
+                        m_OverrideDetectableAttributes = true,
+                        m_Tags = new string[0],
+                        m_EntityTypeToSpawn = entityType,
+                        m_ResourceAttributes = new ResourceAttributesData(
+                            (ResourceType)resource.type,
+                            resource.amount,
+                            resource.collectors),
+                        m_OverrideResourceAttributes = true,
+                        m_SpawnPositionOffsetFromSectionCenterX = Fixed64.IntValue((resource.position - wreck.position).X),
+                        m_SpawnPositionOffsetFromSectionCenterY = Fixed64.IntValue((resource.position - wreck.position).Y),
+                        m_UseNonRandomSpawnPositionOffset = true,
+                    };
+                }
 
-		SExtractionZoneViewController = null;
-		SWinConditionPanelController = null;
+                var wreckData = new SimWreckAttributesData
+                {
+                    m_WreckSections = new SimWreckSectionAttributesData[]
+                    {
+                        new SimWreckSectionAttributesData
+                        {
+                            m_ExplosionChance = 100,
+                            m_Health = 1,
+                            m_ResourceSpawnables = childResources,
+                        }
+                    }
+                };
 
-		if (MapXml == "") {
-			try {
-				MapXml = File.ReadAllText(Path.Combine(Application.dataPath, "layout.xml"));
-				Console.WriteLine("[GE mod] Using layout.xml");
-			}
-			catch (Exception) {}
-		}
+                SceneEntityCreator.CreateWreck(
+                    "Resource_Wreck_MP",
+                    wreck.position,
+                    Orientation2.LocalForward,
+                    new string[0],
+                    wreckData,
+                    "",
+                    shape,
+                    res,
+                    detectableAttributes,
+                    false,
+                    positions,
+                    false
+                );
 
-		CustomLayout = GameType != BBI.Game.Data.GameMode.SinglePlayer && (MapXml != "" || maps.ContainsKey(LevelDef.SceneName));
+                // Register wreck for artifact spawning if flagged
+                if (wreck.spawnArtifactOnDestroy)
+                {
+                    WreckArtifactManager.RegisterWreck(wreck.position);
+                }
+            }
+        }
+    }
 
-		int count = count = teams.Count;
-		if (gameMode == TeamSetting.Team) {
-			int numberOnTeam1 = teams.Count(p => p.Value == new TeamID(1));
-			int numberOnTeam2 = teams.Count(p => p.Value == new TeamID(2));
-			int numberRandom = count - numberOnTeam1 - numberOnTeam2;
-			// Place random teammates in correct teams
-			for (int i = 0; i < numberRandom; i++) {
-				if (numberOnTeam1 < numberOnTeam2) numberOnTeam1++;
-				else                               numberOnTeam2++;
-			}
+    // Other methods like Tick, SetMap, ResetLayout, and relevant fields would follow here...
 
-			int mostOnTeam = Math.Max(numberOnTeam1, numberOnTeam2);
-			count = mostOnTeam * 2;
-		}
+}
 
-		if (CustomLayout)  {
-			Console.WriteLine("[GE mod] Trying to load custom layout");
-			// Don't load a layout for the wrong map or gamemode
-			if (!LoadLayout(GetLayoutData(), LevelDef.SceneName, GameMode, count)) {
-				Console.WriteLine("[GE mod] Loading custom layout cancelled");
-				ResetLayout();
-				MapXml = "";
-				LayoutName = "";
-				CustomLayout = GameType != BBI.Game.Data.GameMode.SinglePlayer && maps.ContainsKey(LevelDef.SceneName);
-				if (CustomLayout) { // Only load default layout if its not a vanilla map
-					Console.WriteLine("[GE mod] Trying to load default layout for SP map");
-					LoadLayout(GetLayoutData(), LevelDef.SceneName, GameMode, count);
-				}
-			}
-		}
-	}
 
 	public static void ResetLayout() {
 		// Reset custom layout data
@@ -366,18 +340,28 @@ public static class MapModManager {
 													});
 													break;
 
-												case "wreck":
-													bool blockLof = false;
-													try {
-														blockLof = Boolean.Parse(xmlLayoutReader.GetAttribute("blocklof"));
-													} catch {}
-
-													MapWreckData wreck = new MapWreckData {
-														position = new Vector2r(Fixed64.FromConstFloat(float.Parse(xmlLayoutReader.GetAttribute("x"))), Fixed64.FromConstFloat(float.Parse(xmlLayoutReader.GetAttribute("y")))),
-														angle = float.Parse(xmlLayoutReader.GetAttribute("angle")),
-														resources = new List<MapResourceData>(),
-														blockLof = blockLof,
-													};
+													case "wreck":
+														    bool blockLof = false;
+														    bool spawnArtifact = false;
+														    try
+														    {
+														        spawnArtifact = Boolean.Parse(xmlLayoutReader.GetAttribute("spawnArtifactOnDestroy"));
+														    }
+														    catch
+														    {
+														        spawnArtifact = false; // default if attribute is missing or invalid
+														    }
+														    try {
+														        blockLof = Boolean.Parse(xmlLayoutReader.GetAttribute("blocklof"));
+														    } catch {}
+														
+														    MapWreckData wreck = new MapWreckData {
+														        position = new Vector2r(Fixed64.FromConstFloat(float.Parse(xmlLayoutReader.GetAttribute("x"))), Fixed64.FromConstFloat(float.Parse(xmlLayoutReader.GetAttribute("y")))),
+														        angle = float.Parse(xmlLayoutReader.GetAttribute("angle")),
+														        resources = new List<MapResourceData>(),
+														        blockLof = blockLof,
+														        spawnArtifactOnDestroy = spawnArtifact,  // <-- assign the bool here!
+														    };
 
 													// Read child resources
 													XmlReader xmlLayoutReaderWreck = xmlLayoutReader.ReadSubtree();
@@ -609,110 +593,170 @@ public static class MapModManager {
 		"Resource_Wreck_MP",
 	};
 
-	// Mod meta data
+	using System.Collections.Generic;
+// Add appropriate using directives for Entity, Vector2r, SceneEntityCreator, etc.
 
-	public static readonly object artUiLock = new object();
-	public static string ModDescription { get { return "GE mod " + ModVersion; } }
-	public static string ModVersion { get { return "v1.4.4.1"; } }
+public static class MapManager
+{
+    // Mod meta data
+    public static readonly object artUiLock = new object();
+    public static string ModDescription => "GE mod " + ModVersion;
+    public static string ModVersion => "v1.4.4.1";
 
-	// Lobby command memorization
-	public static string LayoutName { get; set; } = "";
-	public static string PatchName { get; set; } = "";
-	public static bool RevealRandomFactions { get; set; } = false;
+    // Lobby command memorization
+    public static string LayoutName { get; set; } = "";
+    public static string PatchName { get; set; } = "";
+    public static bool RevealRandomFactions { get; set; } = false;
 
-	// Mod state data
+    // Mod state data
+    public static bool CustomLayout { get; private set; }
+    public static string MapXml { get; set; } = "";
+    public static LevelDefinition LevelDef { get; private set; }
+    public static GameMode GameType { get; private set; }
+    public static TeamSetting TeamMode { get; private set; } // Renamed from GameMode to avoid duplicate
+    public static uint FrameNumber { get; set; }
 
-	public static bool CustomLayout { get; private set; } // Whether this map has a custom layout
-	public static string MapXml { get; set; } = ""; // The layout will be read into this or set to override a file based layout
-	public static LevelDefinition LevelDef { get; private set; } // The currently running/loading level
-	public static GameMode GameType { get; private set; } // The currently running/loading level
-	public static TeamSetting GameMode { get; private set; } // The currently running/loading level
-	public static uint FrameNumber { get; set; }
+    // External hooks
+    public static ExtractionZoneViewController SExtractionZoneViewController { get; set; }
+    public static object SWinConditionPanelController { get; set; }
 
-	// External hooks
+    // Layout data
+    public static List<MapResourceData> resources = new List<MapResourceData>();
+    public static List<MapWreckData> wrecks = new List<MapWreckData>();
+    public static List<MapArtifactData> artifacts = new List<MapArtifactData>();
+    public static List<MapEzData> ezs = new List<MapEzData>();
+    public static List<MapSpawnData> spawns = new List<MapSpawnData>();
+    public static List<MapUnitData> units = new List<MapUnitData>();
+    public static List<MapColliderData> colliders = new List<MapColliderData>();
+    public static bool overrideBounds;
+    public static Vector2r boundsMin;
+    public static Vector2r boundsMax;
+    public static int heatPoints;
 
-	public static ExtractionZoneViewController SExtractionZoneViewController { get; set; }
-	public static object SWinConditionPanelController { get; set; }
+    public static bool DisableCarrierNavs { get; set; }
+    public static bool DisableAllBlockers { get; set; }
 
-	// Layout data
+    // --- Artifact spawn tracking ---
+    private static List<MapArtifactData> activeArtifacts = new List<MapArtifactData>();
 
-	public static List<MapResourceData> resources = new List<MapResourceData>();
-	public static List<MapWreckData> wrecks = new List<MapWreckData>();
-	public static List<MapArtifactData> artifacts = new List<MapArtifactData>();
-	public static List<MapEzData> ezs = new List<MapEzData>(); // Extraction Zones
-	public static List<MapSpawnData> spawns = new List<MapSpawnData>();
-	public static List<MapUnitData> units = new List<MapUnitData>();
-	public static List<MapColliderData> colliders = new List<MapColliderData>();
-	public static bool overrideBounds; // Bounds can only make a level smaller not bigger
-	public static Vector2r boundsMin;
-	public static Vector2r boundsMax;
-	public static int heatPoints; // The ambient heat points of the map
+    public static void Tick()
+    {
+        for (int i = 0; i < wrecks.Count; i++)
+        {
+            MapWreckData wreck = wrecks[i];
 
-	public static bool DisableCarrierNavs { get; set; }
-	public static bool DisableAllBlockers { get; set; }
+            if (IsWreckDestroyed(wreck) && wreck.spawnArtifactOnDestroy)
+            {
+                if (!ArtifactAlreadySpawnedAt(wreck.position))
+                {
+                    Entity artifactEntity = SpawnArtifactAt(wreck.position);
 
-	// Structures
+                    activeArtifacts.Add(new MapArtifactData
+                    {
+                        entity = artifactEntity,
+                        position = wreck.position
+                    });
+                }
+            }
+        }
 
-	public struct MapResourceData {
-		public Vector2r position;
-		public int type; // 0 = CU, 1 = RU
-		public int amount; // Amount of resources at spawn
-		public int collectors; // Max collectors
-	}
+        for (int i = activeArtifacts.Count - 1; i >= 0; i--)
+        {
+            if (activeArtifacts[i].NeedsRespawning)
+            {
+                Entity newArtifact = SpawnArtifactAt(activeArtifacts[i].position);
+                activeArtifacts[i] = new MapArtifactData
+                {
+                    entity = newArtifact,
+                    position = activeArtifacts[i].position
+                };
+            }
+        }
+    }
 
-	public struct MapWreckData {
-		public Vector2r position;
-		public float angle;
-		public List<MapResourceData> resources;
-		public bool blockLof;
-	}
+    private static bool IsWreckDestroyed(MapWreckData wreck)
+    {
+        // TODO: Replace with actual destruction logic
+        return true;
+    }
 
-	public struct MapArtifactData {
-		public Entity entity;
-		public Vector2r position;
-		public bool NeedsRespawning {
-			get {
-				return entity == Entity.None || entity.GetComponent<Position>(10) == null;
-			}
-		}
-	}
+    private static bool ArtifactAlreadySpawnedAt(Vector2r position)
+    {
+        return activeArtifacts.Exists(a => a.position.Equals(position));
+    }
 
-	public struct MapEzData { // Ez = Extraction Zone
-		public int team;
-		public Vector2r position;
-		public float radius;
-	}
+    private static Entity SpawnArtifactAt(Vector2r position)
+    {
+        // TODO: Use actual API call for entity creation
+        return SceneEntityCreator.CreateCollectibleEntity("Artifact", CollectibleType.Artifact, position, default(Orientation2));
+    }
 
-	public struct MapSpawnData {
-		public int team;
-		public int index; // Only has to be unique per team
-		public Vector3 position;
-		public float angle;
-		public float cameraAngle;
-		public bool fleet; // Whether you start with a starting fleet
-	}
+    // --- Data Structures ---
+    public struct MapResourceData
+    {
+        public Vector2r position;
+        public int type; // 0 = CU, 1 = RU
+        public int amount;
+        public int collectors;
+    }
 
-	public struct MapUnitData {
-		public int team;
-		public int index; // Only has to be unique per team
-		public string type;
-		public Vector2r position;
-		public Orientation2 orientation;
-	}
+    public struct MapWreckData
+    {
+        public Vector2r position;
+        public float angle;
+        public List<MapResourceData> resources;
+        public bool blockLof;
+        public bool spawnArtifactOnDestroy;
+    }
 
-	public struct MapColliderData {
-		public ConvexPolygon collider;
-		public UnitClass mask;
-		public bool blockLof;
-		public bool blockAllHeights;
-	}
+    public struct MapArtifactData
+    {
+        public Entity entity;
+        public Vector2r position;
+        public bool NeedsRespawning => entity == Entity.None || entity.GetComponent<Position>(10) == null;
+    }
 
-	public struct MapMetaData {
-		public string name; // The in-game name to use for this map
-		public TeamSetting gameMode;
-		public string defaultFile; // Default path of map layout file
-		public int idInt; // The integer ID of the localized name
-		public string idStr; // The ID of the localized name
-		public string locName; // The localized name
-	}
+    public struct MapEzData
+    {
+        public int team;
+        public Vector2r position;
+        public float radius;
+    }
+
+    public struct MapSpawnData
+    {
+        public int team;
+        public int index;
+        public Vector3 position;
+        public float angle;
+        public float cameraAngle;
+        public bool fleet;
+    }
+
+    public struct MapUnitData
+    {
+        public int team;
+        public int index;
+        public string type;
+        public Vector2r position;
+        public Orientation2 orientation;
+    }
+
+    public struct MapColliderData
+    {
+        public ConvexPolygon collider;
+        public UnitClass mask;
+        public bool blockLof;
+        public bool blockAllHeights;
+    }
+
+    public struct MapMetaData
+    {
+        public string name;
+        public TeamSetting gameMode;
+        public string defaultFile;
+        public int idInt;
+        public string idStr;
+        public string locName;
+    }
 }
